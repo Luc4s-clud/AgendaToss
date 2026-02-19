@@ -175,6 +175,20 @@ app.post('/api/comandas', async (req, res) => {
   }
 });
 
+// Uma comanda (para editar itens)
+app.get('/api/comandas/:id', async (req, res) => {
+  try {
+    const comanda = await prisma.comanda.findUnique({
+      where: { id: req.params.id },
+      include: { itens: { include: { produto: true } } },
+    });
+    if (!comanda) return res.status(404).json({ error: 'Comanda não encontrada' });
+    res.json(comanda);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Atualizar comanda (fechar ou marcar como paga)
 app.patch('/api/comandas/:id', async (req, res) => {
   try {
@@ -194,6 +208,143 @@ app.patch('/api/comandas/:id', async (req, res) => {
     res.json(comanda);
   } catch (e) {
     if (e.code === 'P2025') return res.status(404).json({ error: 'Comanda não encontrada' });
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Adicionar item à comanda (desconta do estoque)
+app.post('/api/comandas/:comandaId/itens', async (req, res) => {
+  try {
+    const { comandaId } = req.params;
+    const { produtoId, quantidade } = req.body;
+    if (!produtoId || quantidade == null) {
+      return res.status(400).json({ error: 'Faltam: produtoId, quantidade' });
+    }
+    const qty = Number(quantidade);
+    if (isNaN(qty) || qty <= 0) {
+      return res.status(400).json({ error: 'Quantidade deve ser maior que zero' });
+    }
+
+    const comanda = await prisma.comanda.findUnique({
+      where: { id: comandaId },
+      include: { itens: true },
+    });
+    if (!comanda) return res.status(404).json({ error: 'Comanda não encontrada' });
+    if (comanda.status !== 'aberta') {
+      return res.status(400).json({ error: 'Só é possível adicionar itens em comanda aberta' });
+    }
+
+    const produto = await prisma.produto.findUnique({ where: { id: produtoId } });
+    if (!produto) return res.status(404).json({ error: 'Produto não encontrado' });
+    if (!produto.ativo) return res.status(400).json({ error: 'Produto inativo' });
+    if (produto.controleEstoque) {
+      const estoque = Number(produto.estoqueAtual);
+      if (estoque < qty) {
+        return res.status(400).json({ error: `Estoque insuficiente. Disponível: ${estoque} ${produto.unidade}` });
+      }
+    }
+
+    const precoUnit = Number(produto.preco);
+    const subtotal = precoUnit * qty;
+    const novoTotal = Number(comanda.valorTotal) + subtotal;
+
+    await prisma.$transaction([
+      prisma.itemComanda.create({
+        data: {
+          comandaId,
+          produtoId,
+          quantidade: qty,
+          precoUnit,
+          subtotal,
+        },
+      }),
+      prisma.comanda.update({
+        where: { id: comandaId },
+        data: { valorTotal: novoTotal },
+      }),
+      ...(produto.controleEstoque
+        ? [
+            prisma.movimentacaoEstoque.create({
+              data: {
+                produtoId,
+                tipo: 'saida',
+                quantidade: qty,
+                motivo: `Comanda #${comanda.numero}`,
+              },
+            }),
+            prisma.produto.update({
+              where: { id: produtoId },
+              data: { estoqueAtual: Number(produto.estoqueAtual) - qty },
+            }),
+          ]
+        : []),
+    ]);
+
+    const atualizada = await prisma.comanda.findUnique({
+      where: { id: comandaId },
+      include: { itens: { include: { produto: true } } },
+    });
+    res.status(201).json(atualizada);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Remover item da comanda (devolve ao estoque)
+app.delete('/api/comandas/:comandaId/itens/:itemId', async (req, res) => {
+  try {
+    const { comandaId, itemId } = req.params;
+
+    const comanda = await prisma.comanda.findUnique({
+      where: { id: comandaId },
+      include: { itens: true },
+    });
+    if (!comanda) return res.status(404).json({ error: 'Comanda não encontrada' });
+    if (comanda.status !== 'aberta') {
+      return res.status(400).json({ error: 'Só é possível remover itens de comanda aberta' });
+    }
+
+    const item = await prisma.itemComanda.findFirst({
+      where: { id: itemId, comandaId },
+      include: { produto: true },
+    });
+    if (!item) return res.status(404).json({ error: 'Item não encontrado' });
+
+    const qty = Number(item.quantidade);
+    const subtotal = Number(item.subtotal);
+    const novoTotal = Math.max(0, Number(comanda.valorTotal) - subtotal);
+    const produto = item.produto;
+
+    await prisma.$transaction([
+      prisma.itemComanda.delete({ where: { id: itemId } }),
+      prisma.comanda.update({
+        where: { id: comandaId },
+        data: { valorTotal: novoTotal },
+      }),
+      ...(produto.controleEstoque
+        ? [
+            prisma.movimentacaoEstoque.create({
+              data: {
+                produtoId: produto.id,
+                tipo: 'entrada',
+                quantidade: qty,
+                motivo: `Devolução comanda #${comanda.numero}`,
+              },
+            }),
+            prisma.produto.update({
+              where: { id: produto.id },
+              data: { estoqueAtual: Number(produto.estoqueAtual) + qty },
+            }),
+          ]
+        : []),
+    ]);
+
+    const atualizada = await prisma.comanda.findUnique({
+      where: { id: comandaId },
+      include: { itens: { include: { produto: true } } },
+    });
+    res.json(atualizada);
+  } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
