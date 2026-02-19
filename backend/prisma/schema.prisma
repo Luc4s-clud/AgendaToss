@@ -1,0 +1,88 @@
+// Prisma - MySQL (Hostinger)
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ---- Agendamento (quadras) ----
+model Quadra {
+  id        String   @id @default(cuid())
+  nome      String
+  modalidade String  // "volei", "beach_tenis", "futvolei"
+  ativo     Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  agendamentos Agendamento[]
+}
+
+model Agendamento {
+  id         String   @id @default(cuid())
+  quadraId   String
+  quadra     Quadra   @relation(fields: [quadraId], references: [id], onDelete: Cascade)
+  data       DateTime
+  horaInicio String
+  horaFim    String
+  cliente    String?
+  telefone   String?
+  valor      Decimal  @db.Decimal(10, 2)
+  pago       Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([quadraId, data])
+}
+
+// ---- Bar (estoque, comandas, financeiro) ----
+model Produto {
+  id          String   @id @default(cuid())
+  nome        String
+  preco       Decimal  @db.Decimal(10, 2)
+  unidade     String   @default("UN") // UN, L, ML, KG, etc.
+  estoqueAtual Decimal @db.Decimal(12, 3) @default(0)
+  controleEstoque Boolean @default(true)
+  ativo       Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  itensComanda ItemComanda[]
+  movimentacoesEstoque MovimentacaoEstoque[]
+}
+
+model Comanda {
+  id        String   @id @default(cuid())
+  numero    Int
+  mesa      String?
+  status    String   @default("aberta") // aberta, fechada, paga
+  valorTotal Decimal @db.Decimal(10, 2) @default(0)
+  abertaEm  DateTime @default(now())
+  fechadaEm DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  itens     ItemComanda[]
+}
+
+model ItemComanda {
+  id         String   @id @default(cuid())
+  comandaId  String
+  comanda    Comanda  @relation(fields: [comandaId], references: [id], onDelete: Cascade)
+  produtoId  String
+  produto    Produto  @relation(fields: [produtoId], references: [id])
+  quantidade Decimal  @db.Decimal(10, 3)
+  precoUnit  Decimal  @db.Decimal(10, 2)
+  subtotal   Decimal  @db.Decimal(10, 2)
+  createdAt  DateTime @default(now())
+  @@index([comandaId])
+}
+
+model MovimentacaoEstoque {
+  id         String   @id @default(cuid())
+  produtoId  String
+  produto    Produto  @relation(fields: [produtoId], references: [id], onDelete: Cascade)
+  tipo       String   // entrada, saida, ajuste
+  quantidade Decimal  @db.Decimal(12, 3)
+  motivo     String?
+  createdAt  DateTime @default(now())
+  @@index([produtoId])
+}
