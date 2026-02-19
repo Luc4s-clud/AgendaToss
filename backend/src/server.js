@@ -4,6 +4,7 @@ import { prisma } from './lib/prisma.js';
 
 const app = express();
 const PORT = process.env.PORT || 3333;
+const VALOR_QUADRA_POR_HORA = 80;
 
 app.use(cors());
 app.use(express.json());
@@ -77,9 +78,10 @@ app.get('/api/agendamentos', async (req, res) => {
 app.post('/api/agendamentos', async (req, res) => {
   try {
     const { quadraId, data, horaInicio, horaFim, cliente, telefone, valor } = req.body;
-    if (!quadraId || !data || !horaInicio || !horaFim || valor == null) {
-      return res.status(400).json({ error: 'Faltam campos: quadraId, data, horaInicio, horaFim, valor' });
+    if (!quadraId || !data || !horaInicio || !horaFim) {
+      return res.status(400).json({ error: 'Faltam campos: quadraId, data, horaInicio, horaFim' });
     }
+    const valorHora = valor != null ? Number(valor) : VALOR_QUADRA_POR_HORA;
     const dataObj = new Date(data);
     const agendamento = await prisma.agendamento.create({
       data: {
@@ -89,7 +91,7 @@ app.post('/api/agendamentos', async (req, res) => {
         horaFim: String(horaFim).replace(':', ''),
         cliente: cliente || null,
         telefone: telefone || null,
-        valor: Number(valor),
+        valor: valorHora,
       },
     });
     const withQuadra = await prisma.agendamento.findUnique({
@@ -464,6 +466,54 @@ app.post('/api/movimentacoes', async (req, res) => {
       include: { produto: true },
     });
     res.status(201).json(withProduto);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ---- Financeiro (receita quadras + bar) ----
+app.get('/api/financeiro', async (req, res) => {
+  try {
+    const { dataInicio, dataFim } = req.query;
+    const inicio = dataInicio ? new Date(dataInicio + 'T00:00:00.000Z') : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+    const fim = dataFim ? new Date(dataFim + 'T23:59:59.999Z') : new Date();
+
+    const [agendamentos, comandasPagas] = await Promise.all([
+      prisma.agendamento.findMany({
+        where: {
+          data: { gte: inicio, lte: fim },
+        },
+        include: { quadra: true },
+        orderBy: [{ data: 'asc' }, { horaInicio: 'asc' }],
+      }),
+      prisma.comanda.findMany({
+        where: {
+          status: 'paga',
+          updatedAt: { gte: inicio, lte: fim },
+        },
+        include: { itens: { include: { produto: true } } },
+        orderBy: { updatedAt: 'desc' },
+      }),
+    ]);
+
+    const totalQuadras = agendamentos.reduce((s, a) => s + Number(a.valor), 0);
+    const totalBar = comandasPagas.reduce((s, c) => s + Number(c.valorTotal), 0);
+
+    res.json({
+      quadras: {
+        total: totalQuadras,
+        quantidade: agendamentos.length,
+        valorHora: VALOR_QUADRA_POR_HORA,
+        itens: agendamentos,
+      },
+      bar: {
+        total: totalBar,
+        quantidade: comandasPagas.length,
+        itens: comandasPagas,
+      },
+      totalGeral: totalQuadras + totalBar,
+      periodo: { dataInicio: inicio.toISOString().slice(0, 10), dataFim: fim.toISOString().slice(0, 10) },
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
