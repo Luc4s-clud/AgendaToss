@@ -104,6 +104,27 @@ app.post('/api/agendamentos', async (req, res) => {
   }
 });
 
+// Atualizar agendamento (ex.: confirmar pagamento)
+app.patch('/api/agendamentos/:id', async (req, res) => {
+  try {
+    const { pago } = req.body;
+    const data = {};
+    if (typeof pago === 'boolean') data.pago = pago;
+    if (Object.keys(data).length === 0) {
+      return res.status(400).json({ error: 'Envie pelo menos um campo para atualizar (ex.: pago)' });
+    }
+    const agendamento = await prisma.agendamento.update({
+      where: { id: req.params.id },
+      data,
+      include: { quadra: true },
+    });
+    res.json(agendamento);
+  } catch (e) {
+    if (e.code === 'P2025') return res.status(404).json({ error: 'Agendamento não encontrado' });
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Cancelar (deletar) agendamento
 app.delete('/api/agendamentos/:id', async (req, res) => {
   try {
