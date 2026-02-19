@@ -129,6 +129,75 @@ app.get('/api/comandas', async (req, res) => {
   }
 });
 
+// Próximo número de comanda (para cadastro)
+app.get('/api/comandas/proximo-numero', async (_, res) => {
+  try {
+    const last = await prisma.comanda.findFirst({
+      orderBy: { numero: 'desc' },
+      select: { numero: true },
+    });
+    res.json({ proximoNumero: last ? last.numero + 1 : 1 });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Criar comanda (número do cartão + mesa opcional)
+app.post('/api/comandas', async (req, res) => {
+  try {
+    const { numero, mesa } = req.body;
+    if (numero == null) {
+      return res.status(400).json({ error: 'Campo numero é obrigatório' });
+    }
+    const num = Number(numero);
+    if (isNaN(num) || num < 1) {
+      return res.status(400).json({ error: 'Número da comanda deve ser um inteiro positivo' });
+    }
+    const existente = await prisma.comanda.findFirst({
+      where: { numero: num, status: 'aberta' },
+    });
+    if (existente) {
+      return res.status(400).json({ error: `Já existe comanda aberta com número ${num}` });
+    }
+    const comanda = await prisma.comanda.create({
+      data: {
+        numero: num,
+        mesa: mesa ? String(mesa).trim() || null : null,
+      },
+    });
+    const withItens = await prisma.comanda.findUnique({
+      where: { id: comanda.id },
+      include: { itens: { include: { produto: true } } },
+    });
+    res.status(201).json(withItens);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Atualizar comanda (fechar ou marcar como paga)
+app.patch('/api/comandas/:id', async (req, res) => {
+  try {
+    const { status } = req.body;
+    if (!status || !['aberta', 'fechada', 'paga'].includes(status)) {
+      return res.status(400).json({ error: 'status deve ser: aberta, fechada ou paga' });
+    }
+    const data = { status };
+    if (status === 'fechada') {
+      data.fechadaEm = new Date();
+    }
+    const comanda = await prisma.comanda.update({
+      where: { id: req.params.id },
+      data,
+      include: { itens: { include: { produto: true } } },
+    });
+    res.json(comanda);
+  } catch (e) {
+    if (e.code === 'P2025') return res.status(404).json({ error: 'Comanda não encontrada' });
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ---- Estoque: Produtos ----
 app.get('/api/produtos', async (req, res) => {
   try {
