@@ -27,6 +27,7 @@ npm run dev
    ```txt
    mysql://USUARIO:SENHA@mysql.hostinger.com:3306/NOME_DO_BANCO
    ```
+   **Guia detalhado:** [docs/BANCO-VPS.md](docs/BANCO-VPS.md) — passo a passo para criar o banco na VPS e aplicar as tabelas.
 
 2. **Na VPS (SSH)**  
    Instale Node 18.18+ (ou 20 LTS) e PM2 (global):
@@ -85,6 +86,15 @@ npm run dev
    pm2 restart agenda-toss-api
    pm2 stop agenda-toss-api
    ```
+
+7. **Acesso à API de fora da VPS (frontend no PC, mobile, etc.)**  
+   O backend escuta na porta 3333. Para o navegador ou outro app fora da VPS conseguir acessar `http://IP_DA_VPS:3333`, é preciso **liberar a porta 3333 no firewall** da VPS. Exemplo com `ufw` (Ubuntu/Debian):
+   ```bash
+   sudo ufw allow 3333/tcp
+   sudo ufw status
+   sudo ufw reload
+   ```
+   No painel da Hostinger (VPS), confira também se não há firewall extra bloqueando a porta 3333.
 
 ## Scripts
 
