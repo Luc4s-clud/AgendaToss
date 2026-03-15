@@ -279,7 +279,7 @@ app.get('/api/campeonatos/:campeonatoId/equipes', requireAuth, async (req, res) 
   }
 });
 
-app.post('/api/campeonatos/:campeonatoId/equipes', requireAuth, requireAdmin, async (req, res) => {
+app.post('/api/campeonatos/:campeonatoId/equipes', requireAuth, async (req, res) => {
   try {
     const { campeonatoId } = req.params;
     const { nome, responsavel, telefone } = req.body;
