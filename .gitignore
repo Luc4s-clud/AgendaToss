@@ -1,0 +1,8 @@
+# Só o backend é versionado neste repositório
+frontend/
+
+node_modules/
+.env
+.env.local
+*.log
+.DS_Store
