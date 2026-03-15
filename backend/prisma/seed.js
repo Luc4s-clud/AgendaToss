@@ -45,10 +45,9 @@ async function main() {
       data: [
         { nome: 'Quadra 1', modalidade: 'volei', ativo: true },
         { nome: 'Quadra 2', modalidade: 'beach_tenis', ativo: true },
-        { nome: 'Quadra 3', modalidade: 'futvolei', ativo: true },
       ],
     });
-    console.log('Quadras criadas.');
+    console.log('Quadras criadas (2).');
   }
   console.log('Seed concluído.');
 }

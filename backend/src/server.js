@@ -174,6 +174,242 @@ app.delete('/api/agendamentos/:id', requireAuth, async (req, res) => {
   }
 });
 
+// ---- Campeonatos (autenticado; criação/edição apenas ADMIN) ----
+app.get('/api/campeonatos', requireAuth, async (req, res) => {
+  try {
+    const { status } = req.query;
+    const where = status ? { status } : {};
+    const campeonatos = await prisma.campeonato.findMany({
+      where,
+      include: { equipes: true, partidas: { include: { equipe1: true, equipe2: true, quadra: true } } },
+      orderBy: { dataInicio: 'desc' },
+    });
+    res.json(campeonatos);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/campeonatos/:id', requireAuth, async (req, res) => {
+  try {
+    const campeonato = await prisma.campeonato.findUnique({
+      where: { id: req.params.id },
+      include: { equipes: true, partidas: { include: { equipe1: true, equipe2: true, quadra: true } } },
+    });
+    if (!campeonato) return res.status(404).json({ error: 'Campeonato não encontrado' });
+    res.json(campeonato);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/campeonatos', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { nome, modalidade, dataInicio, dataFim, status, descricao, valorInscricao } = req.body;
+    if (!nome || !modalidade || !dataInicio) {
+      return res.status(400).json({ error: 'Faltam campos: nome, modalidade, dataInicio' });
+    }
+    const modalidades = ['volei', 'beach_tenis', 'futvolei'];
+    if (!modalidades.includes(String(modalidade))) {
+      return res.status(400).json({ error: 'modalidade deve ser: volei, beach_tenis ou futvolei' });
+    }
+    const campeonato = await prisma.campeonato.create({
+      data: {
+        nome: String(nome),
+        modalidade: String(modalidade),
+        dataInicio: new Date(dataInicio),
+        dataFim: dataFim ? new Date(dataFim) : null,
+        status: status || 'inscricoes_abertas',
+        descricao: descricao != null ? String(descricao) : null,
+        valorInscricao: valorInscricao != null ? Number(valorInscricao) : null,
+      },
+    });
+    res.status(201).json(campeonato);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.patch('/api/campeonatos/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { nome, modalidade, dataInicio, dataFim, status, descricao, valorInscricao } = req.body;
+    const data = {};
+    if (nome !== undefined) data.nome = String(nome);
+    if (modalidade !== undefined) data.modalidade = String(modalidade);
+    if (dataInicio !== undefined) data.dataInicio = new Date(dataInicio);
+    if (dataFim !== undefined) data.dataFim = dataFim ? new Date(dataFim) : null;
+    if (status !== undefined) data.status = String(status);
+    if (descricao !== undefined) data.descricao = descricao != null ? String(descricao) : null;
+    if (valorInscricao !== undefined) data.valorInscricao = valorInscricao != null ? Number(valorInscricao) : null;
+    if (Object.keys(data).length === 0) {
+      return res.status(400).json({ error: 'Envie pelo menos um campo para atualizar' });
+    }
+    const campeonato = await prisma.campeonato.update({
+      where: { id: req.params.id },
+      data,
+      include: { equipes: true, partidas: { include: { equipe1: true, equipe2: true, quadra: true } } },
+    });
+    res.json(campeonato);
+  } catch (e) {
+    if (e.code === 'P2025') return res.status(404).json({ error: 'Campeonato não encontrado' });
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete('/api/campeonatos/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    await prisma.campeonato.delete({ where: { id: req.params.id } });
+    res.status(204).send();
+  } catch (e) {
+    if (e.code === 'P2025') return res.status(404).json({ error: 'Campeonato não encontrado' });
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Equipes de um campeonato
+app.get('/api/campeonatos/:campeonatoId/equipes', requireAuth, async (req, res) => {
+  try {
+    const equipes = await prisma.equipe.findMany({
+      where: { campeonatoId: req.params.campeonatoId },
+      orderBy: { nome: 'asc' },
+    });
+    res.json(equipes);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/campeonatos/:campeonatoId/equipes', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { campeonatoId } = req.params;
+    const { nome, responsavel, telefone } = req.body;
+    if (!nome) return res.status(400).json({ error: 'Campo nome é obrigatório' });
+    const equipe = await prisma.equipe.create({
+      data: {
+        campeonatoId,
+        nome: String(nome),
+        responsavel: responsavel != null ? String(responsavel) : null,
+        telefone: telefone != null ? String(telefone) : null,
+      },
+    });
+    res.status(201).json(equipe);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.patch('/api/campeonatos/:campeonatoId/equipes/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { nome, responsavel, telefone } = req.body;
+    const data = {};
+    if (nome !== undefined) data.nome = String(nome);
+    if (responsavel !== undefined) data.responsavel = responsavel != null ? String(responsavel) : null;
+    if (telefone !== undefined) data.telefone = telefone != null ? String(telefone) : null;
+    if (Object.keys(data).length === 0) {
+      return res.status(400).json({ error: 'Envie pelo menos um campo para atualizar' });
+    }
+    const equipe = await prisma.equipe.update({
+      where: { id: req.params.id },
+      data,
+    });
+    res.json(equipe);
+  } catch (e) {
+    if (e.code === 'P2025') return res.status(404).json({ error: 'Equipe não encontrada' });
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete('/api/campeonatos/:campeonatoId/equipes/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    await prisma.equipe.delete({ where: { id: req.params.id } });
+    res.status(204).send();
+  } catch (e) {
+    if (e.code === 'P2025') return res.status(404).json({ error: 'Equipe não encontrada' });
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Partidas de um campeonato
+app.get('/api/campeonatos/:campeonatoId/partidas', requireAuth, async (req, res) => {
+  try {
+    const partidas = await prisma.partida.findMany({
+      where: { campeonatoId: req.params.campeonatoId },
+      include: { equipe1: true, equipe2: true, quadra: true },
+      orderBy: [{ data: 'asc' }, { horaInicio: 'asc' }],
+    });
+    res.json(partidas);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/campeonatos/:campeonatoId/partidas', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { campeonatoId } = req.params;
+    const { quadraId, data, horaInicio, equipe1Id, equipe2Id, placar1, placar2, status } = req.body;
+    if (!data || !equipe1Id || !equipe2Id) {
+      return res.status(400).json({ error: 'Faltam campos: data, equipe1Id, equipe2Id' });
+    }
+    if (equipe1Id === equipe2Id) {
+      return res.status(400).json({ error: 'As duas equipes devem ser diferentes' });
+    }
+    const partida = await prisma.partida.create({
+      data: {
+        campeonatoId,
+        quadraId: quadraId || null,
+        data: new Date(data),
+        horaInicio: horaInicio != null ? String(horaInicio) : null,
+        equipe1Id,
+        equipe2Id,
+        placar1: placar1 != null ? Number(placar1) : null,
+        placar2: placar2 != null ? Number(placar2) : null,
+        status: status || 'agendada',
+      },
+      include: { equipe1: true, equipe2: true, quadra: true },
+    });
+    res.status(201).json(partida);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.patch('/api/campeonatos/:campeonatoId/partidas/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { quadraId, data, horaInicio, equipe1Id, equipe2Id, placar1, placar2, status } = req.body;
+    const dataUpdate = {};
+    if (quadraId !== undefined) dataUpdate.quadraId = quadraId || null;
+    if (data !== undefined) dataUpdate.data = new Date(data);
+    if (horaInicio !== undefined) dataUpdate.horaInicio = horaInicio != null ? String(horaInicio) : null;
+    if (equipe1Id !== undefined) dataUpdate.equipe1Id = equipe1Id;
+    if (equipe2Id !== undefined) dataUpdate.equipe2Id = equipe2Id;
+    if (placar1 !== undefined) dataUpdate.placar1 = placar1 != null ? Number(placar1) : null;
+    if (placar2 !== undefined) dataUpdate.placar2 = placar2 != null ? Number(placar2) : null;
+    if (status !== undefined) dataUpdate.status = String(status);
+    if (Object.keys(dataUpdate).length === 0) {
+      return res.status(400).json({ error: 'Envie pelo menos um campo para atualizar' });
+    }
+    const partida = await prisma.partida.update({
+      where: { id: req.params.id },
+      data: dataUpdate,
+      include: { equipe1: true, equipe2: true, quadra: true },
+    });
+    res.json(partida);
+  } catch (e) {
+    if (e.code === 'P2025') return res.status(404).json({ error: 'Partida não encontrada' });
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete('/api/campeonatos/:campeonatoId/partidas/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    await prisma.partida.delete({ where: { id: req.params.id } });
+    res.status(204).send();
+  } catch (e) {
+    if (e.code === 'P2025') return res.status(404).json({ error: 'Partida não encontrada' });
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Comandas (query: status = aberta | fechada | paga) — apenas ADMIN
 app.get('/api/comandas', requireAuth, requireAdmin, async (req, res) => {
   try {

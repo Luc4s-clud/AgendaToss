@@ -22,13 +22,14 @@ model User {
 
 // ---- Agendamento (quadras) ----
 model Quadra {
-  id        String   @id @default(cuid())
-  nome      String
-  modalidade String  // "volei", "beach_tenis", "futvolei"
-  ativo     Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           String    @id @default(cuid())
+  nome         String
+  modalidade   String    // "volei", "beach_tenis", "futvolei"
+  ativo        Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
   agendamentos Agendamento[]
+  partidas     Partida[]
 }
 
 model Agendamento {
@@ -45,6 +46,57 @@ model Agendamento {
   createdAt  DateTime @default(now())
   updatedAt DateTime @updatedAt
   @@index([quadraId, data])
+}
+
+// ---- Campeonatos ----
+model Campeonato {
+  id             String    @id @default(cuid())
+  nome           String
+  modalidade     String    // "volei", "beach_tenis", "futvolei"
+  dataInicio     DateTime
+  dataFim        DateTime?
+  status         String    @default("inscricoes_abertas") // inscricoes_abertas, em_andamento, encerrado
+  descricao      String?
+  valorInscricao Decimal?   @db.Decimal(10, 2)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  equipes        Equipe[]
+  partidas       Partida[]
+}
+
+model Equipe {
+  id           String   @id @default(cuid())
+  campeonatoId String
+  campeonato   Campeonato @relation(fields: [campeonatoId], references: [id], onDelete: Cascade)
+  nome         String
+  responsavel  String?
+  telefone     String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  partidasComo1 Partida[] @relation("Equipe1")
+  partidasComo2 Partida[] @relation("Equipe2")
+  @@index([campeonatoId])
+}
+
+model Partida {
+  id           String     @id @default(cuid())
+  campeonatoId String
+  campeonato   Campeonato @relation(fields: [campeonatoId], references: [id], onDelete: Cascade)
+  quadraId     String?
+  quadra       Quadra?    @relation(fields: [quadraId], references: [id], onDelete: SetNull)
+  data         DateTime
+  horaInicio   String?
+  equipe1Id    String
+  equipe1      Equipe     @relation("Equipe1", fields: [equipe1Id], references: [id], onDelete: Cascade)
+  equipe2Id    String
+  equipe2      Equipe     @relation("Equipe2", fields: [equipe2Id], references: [id], onDelete: Cascade)
+  placar1      Int?
+  placar2      Int?
+  status       String     @default("agendada") // agendada, realizada, adiada, wo
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  @@index([campeonatoId])
+  @@index([data])
 }
 
 // ---- Bar (estoque, comandas, financeiro) ----
