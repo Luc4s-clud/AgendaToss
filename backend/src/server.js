@@ -1,6 +1,8 @@
 import express from 'express';
 import cors from 'cors';
 import { prisma } from './lib/prisma.js';
+import { authOptional, requireAuth, requireAdmin } from './middleware/auth.js';
+import { hashSenha, compararSenha, gerarToken } from './lib/auth.js';
 
 const app = express();
 const PORT = process.env.PORT || 3333;
@@ -8,6 +10,7 @@ const VALOR_QUADRA_POR_HORA = 80;
 
 app.use(cors());
 app.use(express.json());
+app.use(authOptional);
 
 /** Valida se a conexão com o banco está ok (usa no startup e nos endpoints) */
 async function validarConexaoBanco() {
@@ -41,8 +44,40 @@ app.get('/api/db', async (_, res) => {
   }
 });
 
-// Quadras
-app.get('/api/quadras', async (_, res) => {
+// ---- Auth ----
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, senha } = req.body;
+    if (!email || !senha) {
+      return res.status(400).json({ error: 'Email e senha são obrigatórios' });
+    }
+    const user = await prisma.user.findUnique({
+      where: { email: String(email).trim().toLowerCase() },
+    });
+    if (!user || !user.ativo || !compararSenha(senha, user.senhaHash)) {
+      return res.status(401).json({ error: 'Email ou senha inválidos' });
+    }
+    const token = gerarToken({ userId: user.id });
+    res.json({
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        nome: user.nome,
+        role: user.role,
+      },
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/auth/me', requireAuth, (req, res) => {
+  res.json(req.user);
+});
+
+// Quadras (autenticado: admin ou usuário)
+app.get('/api/quadras', requireAuth, async (_, res) => {
   try {
     const quadras = await prisma.quadra.findMany({ orderBy: { nome: 'asc' } });
     res.json(quadras);
@@ -51,8 +86,8 @@ app.get('/api/quadras', async (_, res) => {
   }
 });
 
-// Agendamentos (query: data, quadraId)
-app.get('/api/agendamentos', async (req, res) => {
+// Agendamentos (query: data, quadraId) — autenticado
+app.get('/api/agendamentos', requireAuth, async (req, res) => {
   try {
     const { data, quadraId } = req.query;
     const where = {};
@@ -74,8 +109,8 @@ app.get('/api/agendamentos', async (req, res) => {
   }
 });
 
-// Criar agendamento
-app.post('/api/agendamentos', async (req, res) => {
+// Criar agendamento — autenticado
+app.post('/api/agendamentos', requireAuth, async (req, res) => {
   try {
     const { quadraId, data, horaInicio, horaFim, cliente, telefone, valor } = req.body;
     if (!quadraId || !data || !horaInicio || !horaFim) {
@@ -104,14 +139,17 @@ app.post('/api/agendamentos', async (req, res) => {
   }
 });
 
-// Atualizar agendamento (ex.: confirmar pagamento)
-app.patch('/api/agendamentos/:id', async (req, res) => {
+// Atualizar agendamento (ex.: confirmar pagamento) — apenas ADMIN pode marcar pago
+app.patch('/api/agendamentos/:id', requireAuth, async (req, res) => {
   try {
     const { pago } = req.body;
     const data = {};
     if (typeof pago === 'boolean') data.pago = pago;
     if (Object.keys(data).length === 0) {
       return res.status(400).json({ error: 'Envie pelo menos um campo para atualizar (ex.: pago)' });
+    }
+    if (data.pago === true && req.user.role !== 'ADMIN') {
+      return res.status(403).json({ error: 'Apenas administradores podem confirmar pagamento.' });
     }
     const agendamento = await prisma.agendamento.update({
       where: { id: req.params.id },
@@ -125,8 +163,8 @@ app.patch('/api/agendamentos/:id', async (req, res) => {
   }
 });
 
-// Cancelar (deletar) agendamento
-app.delete('/api/agendamentos/:id', async (req, res) => {
+// Cancelar (deletar) agendamento — autenticado
+app.delete('/api/agendamentos/:id', requireAuth, async (req, res) => {
   try {
     await prisma.agendamento.delete({ where: { id: req.params.id } });
     res.status(204).send();
@@ -136,8 +174,8 @@ app.delete('/api/agendamentos/:id', async (req, res) => {
   }
 });
 
-// Comandas (query: status = aberta | fechada | paga)
-app.get('/api/comandas', async (req, res) => {
+// Comandas (query: status = aberta | fechada | paga) — apenas ADMIN
+app.get('/api/comandas', requireAuth, requireAdmin, async (req, res) => {
   try {
     const { status } = req.query;
     const where = status ? { status } : {};
@@ -152,8 +190,8 @@ app.get('/api/comandas', async (req, res) => {
   }
 });
 
-// Próximo número de comanda (para cadastro)
-app.get('/api/comandas/proximo-numero', async (_, res) => {
+// Próximo número de comanda (para cadastro) — apenas ADMIN
+app.get('/api/comandas/proximo-numero', requireAuth, requireAdmin, async (_, res) => {
   try {
     const last = await prisma.comanda.findFirst({
       orderBy: { numero: 'desc' },
@@ -165,8 +203,8 @@ app.get('/api/comandas/proximo-numero', async (_, res) => {
   }
 });
 
-// Criar comanda (número do cartão + mesa opcional)
-app.post('/api/comandas', async (req, res) => {
+// Criar comanda (número do cartão + mesa opcional) — apenas ADMIN
+app.post('/api/comandas', requireAuth, requireAdmin, async (req, res) => {
   try {
     const { numero, mesa } = req.body;
     if (numero == null) {
@@ -198,8 +236,8 @@ app.post('/api/comandas', async (req, res) => {
   }
 });
 
-// Uma comanda (para editar itens)
-app.get('/api/comandas/:id', async (req, res) => {
+// Uma comanda (para editar itens) — apenas ADMIN
+app.get('/api/comandas/:id', requireAuth, requireAdmin, async (req, res) => {
   try {
     const comanda = await prisma.comanda.findUnique({
       where: { id: req.params.id },
@@ -212,8 +250,8 @@ app.get('/api/comandas/:id', async (req, res) => {
   }
 });
 
-// Atualizar comanda (fechar ou marcar como paga)
-app.patch('/api/comandas/:id', async (req, res) => {
+// Atualizar comanda (fechar ou marcar como paga) — apenas ADMIN
+app.patch('/api/comandas/:id', requireAuth, requireAdmin, async (req, res) => {
   try {
     const { status } = req.body;
     if (!status || !['aberta', 'fechada', 'paga'].includes(status)) {
@@ -235,8 +273,8 @@ app.patch('/api/comandas/:id', async (req, res) => {
   }
 });
 
-// Adicionar item à comanda (desconta do estoque)
-app.post('/api/comandas/:comandaId/itens', async (req, res) => {
+// Adicionar item à comanda (desconta do estoque) — apenas ADMIN
+app.post('/api/comandas/:comandaId/itens', requireAuth, requireAdmin, async (req, res) => {
   try {
     const { comandaId } = req.params;
     const { produtoId, quantidade } = req.body;
@@ -313,8 +351,8 @@ app.post('/api/comandas/:comandaId/itens', async (req, res) => {
   }
 });
 
-// Remover item da comanda (devolve ao estoque)
-app.delete('/api/comandas/:comandaId/itens/:itemId', async (req, res) => {
+// Remover item da comanda (devolve ao estoque) — apenas ADMIN
+app.delete('/api/comandas/:comandaId/itens/:itemId', requireAuth, requireAdmin, async (req, res) => {
   try {
     const { comandaId, itemId } = req.params;
 
@@ -372,8 +410,8 @@ app.delete('/api/comandas/:comandaId/itens/:itemId', async (req, res) => {
   }
 });
 
-// ---- Estoque: Produtos ----
-app.get('/api/produtos', async (req, res) => {
+// ---- Estoque: Produtos — apenas ADMIN ----
+app.get('/api/produtos', requireAuth, requireAdmin, async (req, res) => {
   try {
     const { ativo } = req.query;
     const where = ativo !== undefined ? { ativo: ativo === '1' || ativo === 'true' } : {};
@@ -387,15 +425,16 @@ app.get('/api/produtos', async (req, res) => {
   }
 });
 
-app.post('/api/produtos', async (req, res) => {
+app.post('/api/produtos', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const { nome, preco, unidade, controleEstoque } = req.body;
+    const { nome, descricao, preco, unidade, controleEstoque } = req.body;
     if (!nome || preco == null) {
       return res.status(400).json({ error: 'Faltam campos: nome, preco' });
     }
     const produto = await prisma.produto.create({
       data: {
         nome: String(nome),
+        descricao: descricao != null ? String(descricao) : null,
         preco: Number(preco),
         unidade: unidade ?? 'UN',
         controleEstoque: controleEstoque !== false,
@@ -407,11 +446,12 @@ app.post('/api/produtos', async (req, res) => {
   }
 });
 
-app.patch('/api/produtos/:id', async (req, res) => {
+app.patch('/api/produtos/:id', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const { nome, preco, unidade, controleEstoque, ativo } = req.body;
+    const { nome, descricao, preco, unidade, controleEstoque, ativo } = req.body;
     const data = {};
     if (nome !== undefined) data.nome = String(nome);
+    if (descricao !== undefined) data.descricao = descricao != null ? String(descricao) : null;
     if (preco !== undefined) data.preco = Number(preco);
     if (unidade !== undefined) data.unidade = String(unidade);
     if (controleEstoque !== undefined) data.controleEstoque = Boolean(controleEstoque);
@@ -427,8 +467,8 @@ app.patch('/api/produtos/:id', async (req, res) => {
   }
 });
 
-// ---- Estoque: Movimentações ----
-app.get('/api/movimentacoes', async (req, res) => {
+// ---- Estoque: Movimentações — apenas ADMIN ----
+app.get('/api/movimentacoes', requireAuth, requireAdmin, async (req, res) => {
   try {
     const { produtoId } = req.query;
     const where = produtoId ? { produtoId } : {};
@@ -443,7 +483,7 @@ app.get('/api/movimentacoes', async (req, res) => {
   }
 });
 
-app.post('/api/movimentacoes', async (req, res) => {
+app.post('/api/movimentacoes', requireAuth, requireAdmin, async (req, res) => {
   try {
     const { produtoId, tipo, quantidade, motivo } = req.body;
     if (!produtoId || !tipo || quantidade == null) {
@@ -492,8 +532,8 @@ app.post('/api/movimentacoes', async (req, res) => {
   }
 });
 
-// ---- Financeiro (receita quadras + bar) ----
-app.get('/api/financeiro', async (req, res) => {
+// ---- Financeiro (receita quadras + bar) — apenas ADMIN ----
+app.get('/api/financeiro', requireAuth, requireAdmin, async (req, res) => {
   try {
     const { dataInicio, dataFim } = req.query;
     const inicio = dataInicio ? new Date(dataInicio + 'T00:00:00.000Z') : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
@@ -540,14 +580,84 @@ app.get('/api/financeiro', async (req, res) => {
   }
 });
 
-// Sobe o servidor só após validar conexão com o banco
+// ---- Financeiro: dados agregados para gráficos (ano, mês, semana) — apenas ADMIN ----
+app.get('/api/financeiro/graficos', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { periodo } = req.query;
+    const now = new Date();
+    let inicio, fim, labels, getKey;
+
+    if (periodo === 'ano') {
+      inicio = new Date(now.getFullYear(), 0, 1);
+      fim = new Date(now.getFullYear(), 11, 31, 23, 59, 59, 999);
+      labels = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+      getKey = (d) => new Date(d).getMonth();
+    } else if (periodo === 'mes') {
+      const year = now.getFullYear();
+      const month = now.getMonth();
+      inicio = new Date(year, month, 1);
+      fim = new Date(year, month + 1, 0, 23, 59, 59, 999);
+      const days = fim.getDate();
+      labels = Array.from({ length: days }, (_, i) => String(i + 1));
+      getKey = (d) => new Date(d).getDate() - 1;
+    } else if (periodo === 'semana') {
+      fim = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+      inicio = new Date(fim);
+      inicio.setDate(inicio.getDate() - 6);
+      inicio.setHours(0, 0, 0, 0);
+      labels = Array.from({ length: 7 }, (_, i) => {
+        const d = new Date(inicio);
+        d.setDate(d.getDate() + i);
+        return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+      });
+      const inicioMs = inicio.getTime();
+      getKey = (d) => {
+        const idx = Math.floor((new Date(d).getTime() - inicioMs) / 86400000);
+        return Math.max(0, Math.min(6, idx));
+      };
+    } else {
+      return res.status(400).json({ error: 'periodo deve ser ano, mes ou semana' });
+    }
+
+    const [agendamentos, comandas] = await Promise.all([
+      prisma.agendamento.findMany({
+        where: { data: { gte: inicio, lte: fim } },
+        select: { data: true, valor: true },
+      }),
+      prisma.comanda.findMany({
+        where: { status: 'paga', updatedAt: { gte: inicio, lte: fim } },
+        select: { updatedAt: true, valorTotal: true },
+      }),
+    ]);
+
+    const n = labels.length;
+    const quadras = new Array(n).fill(0);
+    const bar = new Array(n).fill(0);
+
+    for (const a of agendamentos) {
+      const i = getKey(a.data);
+      if (i >= 0 && i < n) quadras[i] += Number(a.valor);
+    }
+    for (const c of comandas) {
+      const i = getKey(c.updatedAt);
+      if (i >= 0 && i < n) bar[i] += Number(c.valorTotal);
+    }
+
+    res.json({ labels, quadras, bar });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Sobe o servidor; se o banco falhar, não encerra o processo (evita loop de restart do PM2)
 async function iniciar() {
   const db = await validarConexaoBanco();
-  if (!db.ok) {
-    console.error('[FATAL] Não foi possível conectar ao banco de dados:', db.message);
-    process.exit(1);
+  if (db.ok) {
+    console.log('Banco de dados: conexão OK');
+  } else {
+    console.error('[AVISO] Banco de dados indisponível:', db.message);
+    console.error('Servidor sobe mesmo assim; /health retornará 503 até o banco voltar.');
   }
-  console.log('Banco de dados: conexão OK');
 
   app.listen(PORT, () => {
     console.log(`Servidor rodando na porta ${PORT} (${process.env.NODE_ENV || 'development'})`);

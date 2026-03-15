@@ -18,7 +18,9 @@ npm run dev
 - API: `http://localhost:3333`
 - Health: `GET /health`
 - Banco: `GET /api/db`
-- Quadras: `GET /api/quadras`
+- Login: `POST /api/auth/login` (body: `{ "email", "senha" }`) → retorna `{ token, user }`
+- Usuário logado: `GET /api/auth/me` (header `Authorization: Bearer <token>`)
+- **Perfis:** Admin (acesso total) e Usuário (só agendamentos; não pode confirmar pagamento). Após o seed: admin `admin@agendafutshow.com` / `admin123`, usuário `usuario@agendafutshow.com` / `usuario123`.
 
 ## Deploy na VPS Hostinger (PM2)
 
@@ -58,10 +60,11 @@ npm run dev
 4. **Configurar e rodar**
    ```bash
    cp .env.example .env
-   nano .env   # Cole a DATABASE_URL da Hostinger
+   nano .env   # Cole DATABASE_URL e JWT_SECRET (chave forte em produção)
    npm install --production
    npx prisma generate
    npx prisma migrate deploy
+   npm run db:seed   # cria admin e usuário de teste (troque as senhas depois)
    mkdir -p logs
    pm2 start ecosystem.config.cjs
    pm2 save
@@ -106,12 +109,14 @@ npm run dev
 | `npm run db:push` | Sincroniza schema (dev)      |
 | `npm run db:migrate` | Aplica migrações (produção) |
 | `npm run db:studio` | Interface Prisma Studio    |
-| `npm run db:seed` | Dados iniciais (quadras)     |
+| `npm run db:seed` | Dados iniciais (quadras + usuários admin/usuário) |
 
 ## Estrutura
 
 - `prisma/schema.prisma` – modelo do banco (MySQL)
-- `prisma/seed.js` – seed de quadras
-- `src/server.js` – Express e rotas iniciais
+- `prisma/seed.js` – seed de quadras e usuários (admin, usuário)
+- `src/server.js` – Express, auth e rotas
 - `src/lib/prisma.js` – cliente Prisma
+- `src/lib/auth.js` – JWT e bcrypt
+- `src/middleware/auth.js` – requireAuth, requireAdmin
 - `ecosystem.config.cjs` – configuração PM2

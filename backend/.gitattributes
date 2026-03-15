@@ -1,0 +1,7 @@
+# Normalizar fins de linha para LF no repositório (evita warning CRLF/LF no Windows)
+* text=auto eol=lf
+*.js text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.sql text eol=lf
+*.prisma text eol=lf

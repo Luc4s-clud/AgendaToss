@@ -8,6 +8,18 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ---- Usuários e acesso ----
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  senhaHash String
+  nome      String
+  role      String   @default("USUARIO") // ADMIN | USUARIO
+  ativo     Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 // ---- Agendamento (quadras) ----
 model Quadra {
   id        String   @id @default(cuid())
@@ -39,6 +51,7 @@ model Agendamento {
 model Produto {
   id          String   @id @default(cuid())
   nome        String
+  descricao   String?
   preco       Decimal  @db.Decimal(10, 2)
   unidade     String   @default("UN") // UN, L, ML, KG, etc.
   estoqueAtual Decimal @db.Decimal(12, 3) @default(0)
